@@ -1773,6 +1773,7 @@ enum ForkConfig {
 /// Auto-trả lời cuộc gọi Signal đến dựa theo ForkConfig (bản prototype AnswerMate iOS).
 /// Hook: CallServiceStateObserver — khi có call đến (incoming) → chờ RingRTC ready
 /// (localRinging_ReadyToAnswer) + đủ delay → gọi handleAcceptCall (đúng đường user bấm nút).
+@MainActor
 final class ForkAutoAnswer: CallServiceStateObserver {
     static let shared = ForkAutoAnswer()
 
@@ -1787,14 +1788,14 @@ final class ForkAutoAnswer: CallServiceStateObserver {
     @MainActor
     func didUpdateCall(from oldValue: SignalCall?, to newValue: SignalCall?) {
         stopPolling()
-        guard let call = newValue, call.individualCall.direction == .incoming else { return }
+        guard let call = newValue, case .individual(let individualCall) = call.mode, individualCall.direction == .incoming else { return }
 
         let config = ForkConfig.load()
         guard ForkConfig.bool(config, "auto_answer_enabled") else { return }
 
         let allow = ForkConfig.allowlist(config, "auto_answer_allowlist")
         if !allow.isEmpty {
-            guard let e164 = call.individualCall.remoteAddress.e164?.stringValue else { return }
+            guard let e164 = individualCall.remoteAddress.e164?.stringValue else { return }
             let normalized = e164.replacingOccurrences(of: "+", with: "")
             guard allow.contains(normalized) else { return }
         }
@@ -1817,7 +1818,11 @@ final class ForkAutoAnswer: CallServiceStateObserver {
             stopPolling()
             return
         }
-        let state = call.individualCall.state
+        guard case .individual(let individualCall) = call.mode else {
+            stopPolling()
+            return
+        }
+        let state = individualCall.state
         switch state {
         case .localRinging_Anticipatory, .localRinging_ReadyToAnswer:
             pollElapsed += pollInterval
