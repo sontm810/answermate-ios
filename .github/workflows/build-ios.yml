@@ -36,7 +36,12 @@ jobs:
         run: |
           cd "$DERIVED/Build/Products/Debug-iphoneos"
           test -d Signal.app || { echo "Signal.app không tồn tại!"; ls -la; exit 1; }
-          ditto -c -k --keepParent Signal.app AnswerMate-test-unsigned.ipa
+          # ⚠️ IPA PHẢI có cấu trúc Payload/Signal.app (ditto --keepParent Signal.app tạo
+          # Signal.app ở gốc → Sideloadly/AltStore báo "payload does not exist")
+          mkdir -p Payload
+          cp -R Signal.app Payload/
+          zip -qr AnswerMate-test-unsigned.ipa Payload
+          unzip -l AnswerMate-test-unsigned.ipa | head -3
           ls -lh AnswerMate-test-unsigned.ipa
 
       - name: Upload artifact
