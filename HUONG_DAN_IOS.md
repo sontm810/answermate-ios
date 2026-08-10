@@ -14,9 +14,26 @@ cho mục đích thử nghiệm trên iPhone.
 | App Groups | `group.com.miso.answermate.signal.group` (+ `.staging`) — code + entitlements đều theo biến nên khớp nhau |
 | Icon mặc định | logo AnswerMate (bong bóng chat trắng + chữ A xanh) — `Signal/AppIcons/AppIcon.icon/Assets/logo.svg` |
 
-**CHƯA port tính năng AnswerMate Android** (auto-answer, ghi âm, lệnh từ xa, config qua
-tin nhắn...). Signal-iOS là codebase Swift riêng — các tính năng đó phải viết lại bằng Swift
-(dự án riêng, làm sau). Bản này chỉ để **kiểm tra app cài được + chạy được + giao diện** trên iPhone.
+**CHƯA port tính năng AnswerMate Android** — ĐANG LÀM prototype auto-answer (xem dưới).
+Signal-iOS là codebase Swift riêng — các tính năng phải viết lại bằng Swift (dự án
+nhiều phiên). Bản test hiện tại để **kiểm tra app cài được + chạy được + giao diện** trên iPhone.
+
+## Prototype auto-answer (M0 — commit d960558d5c)
+
+Code nằm ở `Signal/Calls/CallService.swift` (cuối file): `ForkConfig` (đọc
+Documents/fork_config.txt — sửa qua app Files, hot reload) + `ForkAutoAnswer`
+(quan sát `CallServiceState` → khi có call đến + RingRTC ready → gọi
+`individualCallService.handleAcceptCall` — đúng đường user bấm nút).
+
+Config keys:
+- `auto_answer_enabled=true` — bật/tắt
+- `auto_answer_delay_ms=1500` — delay trước khi tự trả lời
+- `auto_answer_allowlist=` — số E.164 phân cách phẩy (bỏ dấu +); trống = tất cả
+
+⚠️ Giới hạn iOS cần test trên máy thật: khi khoá màn hình/background, iOS có thể
+không giữ audio session; CallKit vẫn hiện màn hình cuộc gọi đến rồi tự chuyển
+connected. Cellular (gọi số thường) KHÔNG auto-answer được (CallKit không cho app
+tự trả lời — chỉ Signal-to-Signal call là làm được).
 
 ## Build — chạy trên GitHub Actions macOS runner (MIỄN PHÍ)
 
