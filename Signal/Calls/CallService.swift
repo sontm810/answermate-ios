@@ -148,6 +148,8 @@ final class CallService: CallServiceStateObserver, CallServiceStateDelegate {
         self.deviceSleepManager = deviceSleepManager
         self.callManager.delegate = self
         self.callServiceState.addObserver(self)
+        // [fork] AnswerMate: quan sát call để auto-answer
+        self.callServiceState.addObserver(ForkAutoAnswer.shared)
 
         notificationObservers.append(NotificationCenter.default.addObserver(forName: .OWSApplicationDidEnterBackground, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.didEnterBackground() }
@@ -1715,5 +1717,141 @@ extension NetworkInterfaceSet {
         case .ethernet, .wifi, .loopback:
             return self.contains(.wifi)
         }
+    }
+}
+
+// MARK: - [fork] AnswerMate: ForkConfig + ForkAutoAnswer
+
+/// Cấu hình fork AnswerMate — đọc từ Documents/fork_config.txt (hot reload mỗi cuộc gọi).
+/// User có thể sửa file qua app Files (On My iPhone → Signal → fork_config.txt).
+enum ForkConfig {
+    static let fileName = "fork_config.txt"
+
+    static func configURL() -> URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(fileName)
+    }
+
+    /// Đọc config; tạo file mặc định nếu chưa có.
+    static func load() -> [String: String] {
+        let url = configURL()
+        var config: [String: String] = [:]
+        if let content = try? String(contentsOf: url, encoding: .utf8) {
+            for line in content.split(separator: "\n") {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+                let parts = trimmed.split(separator: "=", maxSplits: 1)
+                if parts.count == 2 {
+                    config[String(parts[0]).trimmingCharacters(in: .whitespaces)] = String(parts[1]).trimmingCharacters(in: .whitespaces)
+                }
+            }
+        } else {
+            let content = """
+            # AnswerMate fork config — sửa file này để cấu hình auto-answer (hot reload)
+            auto_answer_enabled=true
+            auto_answer_delay_ms=1500
+            # auto_answer_allowlist = số E.164 phân cách phẩy (bỏ dấu +); để trống = chấp nhận mọi số
+            auto_answer_allowlist=
+            """
+            try? content.write(to: url, atomically: true, encoding: .utf8)
+        }
+        return config
+    }
+
+    static func bool(_ config: [String: String], _ key: String) -> Bool {
+        config[key]?.lowercased() == "true"
+    }
+
+    static func int(_ config: [String: String], _ key: String, default d: Int) -> Int {
+        Int(config[key] ?? "") ?? d
+    }
+
+    static func allowlist(_ config: [String: String], _ key: String) -> Set<String> {
+        Set((config[key] ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
+    }
+}
+
+/// Auto-trả lời cuộc gọi Signal đến dựa theo ForkConfig (bản prototype AnswerMate iOS).
+/// Hook: CallServiceStateObserver — khi có call đến (incoming) → chờ RingRTC ready
+/// (localRinging_ReadyToAnswer) + đủ delay → gọi handleAcceptCall (đúng đường user bấm nút).
+final class ForkAutoAnswer: CallServiceStateObserver {
+    static let shared = ForkAutoAnswer()
+
+    private var pollTimer: Timer?
+    private var armedCall: SignalCall?
+    private var armedDelayMs: Int = 1500
+    private var pollElapsed: Double = 0
+    private var pollCount: Int = 0
+    private let pollInterval: Double = 0.25
+    private let maxPollCount = 120   // ~30s tối đa chờ RingRTC ready
+
+    @MainActor
+    func didUpdateCall(from oldValue: SignalCall?, to newValue: SignalCall?) {
+        stopPolling()
+        guard let call = newValue, call.individualCall.direction == .incoming else { return }
+
+        let config = ForkConfig.load()
+        guard ForkConfig.bool(config, "auto_answer_enabled") else { return }
+
+        let allow = ForkConfig.allowlist(config, "auto_answer_allowlist")
+        if !allow.isEmpty {
+            guard let e164 = call.individualCall.remoteAddress.e164?.stringValue else { return }
+            let normalized = e164.replacingOccurrences(of: "+", with: "")
+            guard allow.contains(normalized) else { return }
+        }
+
+        armedCall = call
+        armedDelayMs = max(0, ForkConfig.int(config, "auto_answer_delay_ms", default: 1500))
+        pollElapsed = 0
+        pollCount = 0
+
+        pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.pollTick()
+            }
+        }
+    }
+
+    @MainActor
+    private func pollTick() {
+        guard let call = armedCall else {
+            stopPolling()
+            return
+        }
+        let state = call.individualCall.state
+        switch state {
+        case .localRinging_Anticipatory, .localRinging_ReadyToAnswer:
+            pollElapsed += pollInterval
+            // Chờ đủ delay
+            guard pollElapsed * 1000 >= Double(armedDelayMs) else { return }
+            if state == .localRinging_ReadyToAnswer {
+                // RingRTC đã sẵn sàng — accept ngay qua đúng đường user bấm nút
+                answerNow(call: call)
+            } else {
+                // RingRTC chưa ready — chờ thêm (có giới hạn)
+                pollCount += 1
+                if pollCount > maxPollCount {
+                    stopPolling()
+                }
+            }
+        default:
+            // Call kết thúc/chuyển trạng thái khác — dừng
+            stopPolling()
+        }
+    }
+
+    @MainActor
+    private func answerNow(call: SignalCall) {
+        stopPolling()
+        Logger.info("[fork] AutoAnswer: accepting call \(call)")
+        AppEnvironment.shared.callService?.individualCallService.handleAcceptCall(call)
+    }
+
+    @MainActor
+    private func stopPolling() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+        armedCall = nil
+        pollElapsed = 0
+        pollCount = 0
     }
 }
