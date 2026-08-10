@@ -1,0 +1,47 @@
+name: Build AnswerMate iOS (test)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build-unsigned-ipa:
+    name: Build unsigned test IPA (macOS runner, free)
+    runs-on: macos-26          # Xcode 26.6 là mặc định trên image này (khớp .xcode-version của Signal)
+    timeout-minutes: 240
+    env:
+      DERIVED: DerivedData
+    steps:
+      - name: Checkout (kèm submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Dependencies (make dependencies — pods + ringrtc prebuild)
+        run: make dependencies
+
+      - name: Build app (không ký — CODE_SIGNING_ALLOWED=NO)
+        run: |
+          xcodebuild -workspace Signal.xcworkspace \
+            -scheme Signal \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package IPA (unsigned — AltStore sẽ tự ký lại khi sideload)
+        run: |
+          cd "$DERIVED/Build/Products/Debug-iphoneos"
+          test -d Signal.app || { echo "Signal.app không tồn tại!"; ls -la; exit 1; }
+          ditto -c -k --keepParent Signal.app AnswerMate-test-unsigned.ipa
+          ls -lh AnswerMate-test-unsigned.ipa
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnswerMate-iOS-test-unsigned
+          path: ${{ env.DERIVED }}/Build/Products/Debug-iphoneos/AnswerMate-test-unsigned.ipa
+          if-no-files-found: error
