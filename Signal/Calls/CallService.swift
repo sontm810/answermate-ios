@@ -1848,6 +1848,8 @@ final class ForkAutoAnswer: CallServiceStateObserver {
     private func answerNow(call: SignalCall) {
         stopPolling()
         Logger.info("[fork] AutoAnswer: accepting call \(call)")
+        // [fork] Luôn trả lời audio-only — không tự bật camera cho video call đến
+        AppEnvironment.shared.callService?.updateIsLocalVideoMuted(isLocalVideoMuted: true)
         AppEnvironment.shared.callService?.individualCallService.handleAcceptCall(call)
     }
 
