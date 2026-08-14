@@ -168,12 +168,26 @@ class MainAppContext: NSObject, AppContext {
     }
 
     func appSharedDataDirectoryPath() -> String {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: TSConstants.applicationGroup)!.path
+        // [fork AnswerMate] Sideload (AltServer free) không có App Groups entitlement
+        // → containerURL trả nil → Signal cũ force-unwrap crash ngay khi launch.
+        // Fallback sang Documents/SharedData để app chạy được khi sideload.
+        if let groupContainerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: TSConstants.applicationGroup) {
+            return groupContainerURL.path
+        }
+        let fallback = appDocumentDirectoryPath() + "/SharedData"
+        try? FileManager.default.createDirectory(atPath: fallback, withIntermediateDirectories: true)
+        return fallback
     }
 
     func appDatabaseBaseDirectoryPath() -> String { appSharedDataDirectoryPath() }
 
-    func appUserDefaults() -> UserDefaults { UserDefaults(suiteName: TSConstants.applicationGroup)! }
+    func appUserDefaults() -> UserDefaults {
+        // [fork AnswerMate] Fallback khi không có App Groups (sideload free account)
+        if let defaults = UserDefaults(suiteName: TSConstants.applicationGroup) {
+            return defaults
+        }
+        return UserDefaults.standard
+    }
 
     func canPresentNotifications() -> Bool { true }
 

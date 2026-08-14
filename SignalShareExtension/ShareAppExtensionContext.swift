@@ -181,7 +181,11 @@ extension ShareAppExtensionContext: AppContext {
     }
 
     func appUserDefaults() -> UserDefaults {
-        return UserDefaults(suiteName: TSConstants.applicationGroup)!
+        // [fork AnswerMate] Fallback khi không có App Groups (sideload free account)
+        if let defaults = UserDefaults(suiteName: TSConstants.applicationGroup) {
+            return defaults
+        }
+        return UserDefaults.standard
     }
 
     func mainApplicationStateOnLaunch() -> UIApplication.State {

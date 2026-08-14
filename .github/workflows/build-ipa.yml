@@ -1,0 +1,55 @@
+name: Build AnswerMate IPA (sideload)
+
+# Build unsigned IPA trên máy Mac ảo của GitHub (miễn phí, repo public).
+# Sau khi build: vào tab Actions -> chọn workflow này -> Download artifact
+# -> ký bằng AltServer/Sideloadly -> cài vào iPhone.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']
+  workflow_dispatch: {}   # cho phép bấm "Run workflow" thủ công
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: "Checkout (kèm submodules: Pods, RingRTC, backup-tests)"
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: "Setup Xcode theo .xcode-version"
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.6'
+
+      - name: "Dependencies (make dependencies như Xcode Cloud)"
+        run: |
+          make dependencies
+          pod install
+
+      - name: "Build (unsigned — để AltServer ký sau)"
+        run: |
+          xcodebuild \
+            -workspace Signal.xcworkspace \
+            -scheme Signal \
+            -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: "Package IPA (cấu trúc Payload/ chuẩn)"
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Debug-iphoneos/Signal.app Payload/
+          zip -qr AnswerMate-test-unsigned.ipa Payload
+          ls -la AnswerMate-test-unsigned.ipa
+
+      - name: "Upload artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnswerMate-test-unsigned
+          path: AnswerMate-test-unsigned.ipa
