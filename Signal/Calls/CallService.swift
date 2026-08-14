@@ -1974,7 +1974,7 @@ enum ForkCallTrigger {
 
         // 1) Xóa tin nhắn khỏi DB Signal trên máy
         SSKEnvironment.shared.databaseStorageRef.write { tx in
-            DependenciesBridge.shared.interactionStore.deleteInteraction(message, tx: tx)
+            message.anyRemove(transaction: tx)
         }
         ForkConfig.log("TRIGGER: đã xóa tin nhắn khỏi máy")
 
@@ -2020,7 +2020,8 @@ enum ForkCallTrigger {
                 AppEnvironment.shared.callService?.handleLocalHangupCall(call)
                 stopHangupWatch()
             }
-        case .terminated, .ending:
+        case .localFailure, .localHangup, .remoteHangup, .remoteHangupNeedPermission,
+             .remoteBusy, .answeredElsewhere, .declinedElsewhere, .busyElsewhere:
             ForkConfig.log("TRIGGER: cuộc gọi đã kết thúc — dừng watch")
             stopHangupWatch()
         default:
