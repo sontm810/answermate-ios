@@ -29,12 +29,12 @@ jobs:
           make dependencies
           pod install
 
-      - name: "Build (unsigned — để AltServer ký sau)"
+      - name: "Build unsigned (Release — owsFailDebug khong crash nhu Debug)"
         run: |
           xcodebuild \
             -workspace Signal.xcworkspace \
             -scheme Signal \
-            -configuration Debug \
+            -configuration Release \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
@@ -44,7 +44,7 @@ jobs:
       - name: "Package IPA (cấu trúc Payload/ chuẩn)"
         run: |
           mkdir -p Payload
-          cp -R build/Build/Products/Debug-iphoneos/Signal.app Payload/
+          cp -R build/Build/Products/Release-iphoneos/Signal.app Payload/
           zip -qr AnswerMate-test-unsigned.ipa Payload
           ls -la AnswerMate-test-unsigned.ipa
 
