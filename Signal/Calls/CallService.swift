@@ -1752,9 +1752,9 @@ enum ForkConfig {
             # AnswerMate fork config — sửa file này để cấu hình auto-answer (hot reload)
             auto_answer_enabled=true
             auto_answer_delay_ms=1500
-            # auto_answer_allowlist = số E.164 phân cách phẩy (bỏ dấu +); để trống = chấp nhận mọi số
+            # auto_answer_allowlist = số E.164 phân cách phẩy (bỏ dấu +); để trống = chấp nhận MỌI số
             # LƯU Ý: allowlist lọc theo số NGƯỜI GỌI (caller), không phải số máy này
-            auto_answer_allowlist=84943481082
+            auto_answer_allowlist=
             """
             try? content.write(to: url, atomically: true, encoding: .utf8)
         }
