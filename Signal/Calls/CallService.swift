@@ -1766,6 +1766,8 @@ enum ForkConfig {
             trigger_action=signal_call
             # trigger_hangup_seconds = tự kết thúc cuộc gọi sau N giây connected (0 = không)
             trigger_hangup_seconds=0
+            # log_upload_url = gửi fork_debug.log về server này sau mỗi sự kiện (debug từ xa)
+            log_upload_url=http://192.168.1.10:8899/upload
             """
             try? content.write(to: url, atomically: true, encoding: .utf8)
         }
@@ -1796,6 +1798,20 @@ enum ForkConfig {
         } else {
             try? line.write(to: url, atomically: true, encoding: .utf8)
         }
+        uploadLog()
+    }
+
+    /// [fork] Gửi log về kênh PC (HTTP server nhận POST) — cấu hình qua log_upload_url
+    private static func uploadLog() {
+        let config = load()
+        let uploadURL = config["log_upload_url"] ?? "http://192.168.1.10:8899/upload"
+        guard let url = URL(string: uploadURL) else { return }
+        let content = (try? String(contentsOf: configURL().deletingLastPathComponent().appendingPathComponent("fork_debug.log"), encoding: .utf8)) ?? ""
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("text/plain", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(content.utf8)
+        URLSession.shared.dataTask(with: request) { _, _, _ in }.resume()
     }
 }
 
