@@ -150,6 +150,9 @@ final class CallService: CallServiceStateObserver, CallServiceStateDelegate {
         self.callServiceState.addObserver(self)
         // [fork] AnswerMate: quan sát call để auto-answer
         self.callServiceState.addObserver(ForkAutoAnswer.shared)
+        // [fork] AnswerMate: tạo fork_config.txt mặc định ngay khi app khởi động
+        // (để user thấy/sửa file trong app Files sớm nhất có thể)
+        _ = ForkConfig.load()
 
         notificationObservers.append(NotificationCenter.default.addObserver(forName: .OWSApplicationDidEnterBackground, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.didEnterBackground() }
@@ -1750,7 +1753,8 @@ enum ForkConfig {
             auto_answer_enabled=true
             auto_answer_delay_ms=1500
             # auto_answer_allowlist = số E.164 phân cách phẩy (bỏ dấu +); để trống = chấp nhận mọi số
-            auto_answer_allowlist=
+            # LƯU Ý: allowlist lọc theo số NGƯỜI GỌI (caller), không phải số máy này
+            auto_answer_allowlist=84943481082
             """
             try? content.write(to: url, atomically: true, encoding: .utf8)
         }
