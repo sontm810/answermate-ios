@@ -1772,6 +1772,20 @@ enum ForkConfig {
     static func allowlist(_ config: [String: String], _ key: String) -> Set<String> {
         Set((config[key] ?? "").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
     }
+
+    /// [fork] Ghi log ra file Documents/fork_debug.log — đọc được qua app Files
+    /// (không phụ thuộc os_log — Logger.info không vào syslog trong build này)
+    static func log(_ msg: String) {
+        let url = configURL().deletingLastPathComponent().appendingPathComponent("fork_debug.log")
+        let line = "[\(Date())] \(msg)\n"
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(line.data(using: .utf8) ?? Data())
+            try? handle.close()
+        } else {
+            try? line.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
 }
 
 /// Auto-trả lời cuộc gọi Signal đến dựa theo ForkConfig (bản prototype AnswerMate iOS).
@@ -1796,11 +1810,14 @@ final class ForkAutoAnswer: CallServiceStateObserver {
         guard let call = newValue, case .individual(let individualCall) = call.mode, individualCall.direction == .incoming else { return }
 
         Logger.info("[fork] didUpdateCall: incoming call từ \(individualCall.remoteAddress.e164?.stringValue ?? "?")")
+        ForkConfig.log("didUpdateCall: incoming từ \(individualCall.remoteAddress.e164?.stringValue ?? "?")")
 
         let config = ForkConfig.load()
         Logger.info("[fork] config: enabled=\(ForkConfig.bool(config, "auto_answer_enabled")), delay=\(ForkConfig.int(config, "auto_answer_delay_ms", default: 1500)), allowlist=\(ForkConfig.allowlist(config, "auto_answer_allowlist"))")
+        ForkConfig.log("config: enabled=\(ForkConfig.bool(config, "auto_answer_enabled")), delay=\(ForkConfig.int(config, "auto_answer_delay_ms", default: 1500))")
         guard ForkConfig.bool(config, "auto_answer_enabled") else {
             Logger.info("[fork] auto_answer_enabled=false — bỏ qua")
+            ForkConfig.log("auto_answer_enabled=false — bỏ qua")
             return
         }
 
@@ -1808,14 +1825,17 @@ final class ForkAutoAnswer: CallServiceStateObserver {
         if !allow.isEmpty {
             guard let e164 = individualCall.remoteAddress.e164?.stringValue else {
                 Logger.info("[fork] allowlist: không lấy được E.164 caller — bỏ qua")
+                ForkConfig.log("allowlist: không lấy được E.164 caller — bỏ qua")
                 return
             }
             let normalized = e164.replacingOccurrences(of: "+", with: "")
             guard allow.contains(normalized) else {
                 Logger.info("[fork] allowlist: số \(normalized) KHÔNG có trong allowlist — bỏ qua")
+                ForkConfig.log("allowlist: số \(normalized) KHÔNG có — bỏ qua")
                 return
             }
             Logger.info("[fork] allowlist: số \(normalized) khớp — tiếp tục")
+            ForkConfig.log("allowlist: \(normalized) khớp — tiếp tục")
         }
 
         armedCall = call
@@ -1823,6 +1843,7 @@ final class ForkAutoAnswer: CallServiceStateObserver {
         pollElapsed = 0
         pollCount = 0
         Logger.info("[fork] bắt đầu poll, delay=\(armedDelayMs)ms, state ban đầu=\(individualCall.state)")
+        ForkConfig.log("bắt đầu poll, delay=\(armedDelayMs)ms, state=\(individualCall.state)")
 
         pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -1845,6 +1866,7 @@ final class ForkAutoAnswer: CallServiceStateObserver {
         let stateDesc = "\(state)"
         if stateDesc != lastLoggedState {
             Logger.info("[fork] pollTick: state=\(stateDesc) (elapsed=\(pollElapsed)s)")
+            ForkConfig.log("poll: state=\(stateDesc) (elapsed=\(pollElapsed)s)")
             lastLoggedState = stateDesc
         }
         switch state {
@@ -1874,6 +1896,7 @@ final class ForkAutoAnswer: CallServiceStateObserver {
     private func answerNow(call: SignalCall) {
         stopPolling()
         Logger.info("[fork] AutoAnswer: accepting call \(call)")
+        ForkConfig.log(">>> ACCEPTING CALL (auto-answer)")
         // [fork] Luôn trả lời audio-only — không tự bật camera cho video call đến
         AppEnvironment.shared.callService?.updateIsLocalVideoMuted(isLocalVideoMuted: true)
         AppEnvironment.shared.callService?.individualCallService.handleAcceptCall(call)
