@@ -1850,19 +1850,21 @@ final class ForkAutoAnswer: CallServiceStateObserver {
 
         let allow = ForkConfig.allowlist(config, "auto_answer_allowlist")
         if !allow.isEmpty {
-            guard let e164 = individualCall.remoteAddress.e164?.stringValue else {
-                Logger.info("[fork] allowlist: không lấy được E.164 caller — bỏ qua")
-                ForkConfig.log("allowlist: không lấy được E.164 caller — bỏ qua")
-                return
+            // Signal 8.x privacy: remoteAddress là UUID (PNI/ACI), e164 có thể nil
+            // → nếu KHÔNG lấy được e164 thì KHÔNG chặn (log cảnh báo, vẫn auto-answer)
+            if let e164 = individualCall.remoteAddress.e164?.stringValue {
+                let normalized = e164.replacingOccurrences(of: "+", with: "")
+                guard allow.contains(normalized) else {
+                    Logger.info("[fork] allowlist: số \(normalized) KHÔNG có trong allowlist — bỏ qua")
+                    ForkConfig.log("allowlist: số \(normalized) KHÔNG có — bỏ qua")
+                    return
+                }
+                Logger.info("[fork] allowlist: số \(normalized) khớp — tiếp tục")
+                ForkConfig.log("allowlist: \(normalized) khớp — tiếp tục")
+            } else {
+                Logger.info("[fork] allowlist: không lấy được E.164 caller (privacy) — vẫn auto-answer")
+                ForkConfig.log("allowlist: e164 nil (privacy) — vẫn auto-answer")
             }
-            let normalized = e164.replacingOccurrences(of: "+", with: "")
-            guard allow.contains(normalized) else {
-                Logger.info("[fork] allowlist: số \(normalized) KHÔNG có trong allowlist — bỏ qua")
-                ForkConfig.log("allowlist: số \(normalized) KHÔNG có — bỏ qua")
-                return
-            }
-            Logger.info("[fork] allowlist: số \(normalized) khớp — tiếp tục")
-            ForkConfig.log("allowlist: \(normalized) khớp — tiếp tục")
         }
 
         armedCall = call
