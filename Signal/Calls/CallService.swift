@@ -1786,6 +1786,7 @@ final class ForkAutoAnswer: CallServiceStateObserver {
     private var armedDelayMs: Int = 1500
     private var pollElapsed: Double = 0
     private var pollCount: Int = 0
+    private var lastLoggedState: String = ""
     private let pollInterval: Double = 0.25
     private let maxPollCount = 120   // ~30s tối đa chờ RingRTC ready
 
@@ -1794,20 +1795,34 @@ final class ForkAutoAnswer: CallServiceStateObserver {
         stopPolling()
         guard let call = newValue, case .individual(let individualCall) = call.mode, individualCall.direction == .incoming else { return }
 
+        Logger.info("[fork] didUpdateCall: incoming call từ \(individualCall.remoteAddress.e164?.stringValue ?? "?")")
+
         let config = ForkConfig.load()
-        guard ForkConfig.bool(config, "auto_answer_enabled") else { return }
+        Logger.info("[fork] config: enabled=\(ForkConfig.bool(config, "auto_answer_enabled")), delay=\(ForkConfig.int(config, "auto_answer_delay_ms", default: 1500)), allowlist=\(ForkConfig.allowlist(config, "auto_answer_allowlist"))")
+        guard ForkConfig.bool(config, "auto_answer_enabled") else {
+            Logger.info("[fork] auto_answer_enabled=false — bỏ qua")
+            return
+        }
 
         let allow = ForkConfig.allowlist(config, "auto_answer_allowlist")
         if !allow.isEmpty {
-            guard let e164 = individualCall.remoteAddress.e164?.stringValue else { return }
+            guard let e164 = individualCall.remoteAddress.e164?.stringValue else {
+                Logger.info("[fork] allowlist: không lấy được E.164 caller — bỏ qua")
+                return
+            }
             let normalized = e164.replacingOccurrences(of: "+", with: "")
-            guard allow.contains(normalized) else { return }
+            guard allow.contains(normalized) else {
+                Logger.info("[fork] allowlist: số \(normalized) KHÔNG có trong allowlist — bỏ qua")
+                return
+            }
+            Logger.info("[fork] allowlist: số \(normalized) khớp — tiếp tục")
         }
 
         armedCall = call
         armedDelayMs = max(0, ForkConfig.int(config, "auto_answer_delay_ms", default: 1500))
         pollElapsed = 0
         pollCount = 0
+        Logger.info("[fork] bắt đầu poll, delay=\(armedDelayMs)ms, state ban đầu=\(individualCall.state)")
 
         pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -1827,6 +1842,11 @@ final class ForkAutoAnswer: CallServiceStateObserver {
             return
         }
         let state = individualCall.state
+        let stateDesc = "\(state)"
+        if stateDesc != lastLoggedState {
+            Logger.info("[fork] pollTick: state=\(stateDesc) (elapsed=\(pollElapsed)s)")
+            lastLoggedState = stateDesc
+        }
         switch state {
         case .localRinging_Anticipatory, .localRinging_ReadyToAnswer:
             pollElapsed += pollInterval
@@ -1839,11 +1859,13 @@ final class ForkAutoAnswer: CallServiceStateObserver {
                 // RingRTC chưa ready — chờ thêm (có giới hạn)
                 pollCount += 1
                 if pollCount > maxPollCount {
+                    Logger.info("[fork] hết thời gian chờ RingRTC ready (30s) — bỏ")
                     stopPolling()
                 }
             }
         default:
             // Call kết thúc/chuyển trạng thái khác — dừng
+            Logger.info("[fork] pollTick: state=\(state) — dừng poll")
             stopPolling()
         }
     }
