@@ -1974,7 +1974,11 @@ enum ForkCallTrigger {
 
         // 1) Xóa tin nhắn khỏi DB Signal trên máy
         SSKEnvironment.shared.databaseStorageRef.write { tx in
-            message.anyRemove(transaction: tx)
+            DependenciesBridge.shared.interactionDeleteManager.delete(
+                interactions: [message],
+                sideEffects: .default(),
+                tx: tx
+            )
         }
         ForkConfig.log("TRIGGER: đã xóa tin nhắn khỏi máy")
 
