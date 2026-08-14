@@ -1736,8 +1736,18 @@ enum ForkConfig {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(fileName)
     }
 
-    /// Đọc config; tạo file mặc định nếu chưa có.
+    /// Đọc config: file local + remote config từ kênh PC (remote override, hot reload).
     static func load() -> [String: String] {
+        var config = loadLocal()
+        if let remote = fetchRemoteConfig(), !remote.isEmpty {
+            for (k, v) in remote { config[k] = v }
+            log("config: đã áp dụng REMOTE config từ kênh PC (\(remote.count) key)")
+        }
+        return config
+    }
+
+    /// Đọc config từ file local; tạo file mặc định nếu chưa có.
+    private static func loadLocal() -> [String: String] {
         let url = configURL()
         var config: [String: String] = [:]
         if let content = try? String(contentsOf: url, encoding: .utf8) {
@@ -1774,6 +1784,24 @@ enum ForkConfig {
         return config
     }
 
+    /// Lấy remote config từ kênh PC (http://192.168.1.10:8899/config) — tôi sửa trên PC,
+    /// app tự tải về áp dụng, không cần đụng file trên máy.
+    private static func fetchRemoteConfig() -> [String: String]? {
+        guard let url = URL(string: "http://192.168.1.10:8899/config"),
+              let data = try? Data(contentsOf: url),
+              let content = String(data: data, encoding: .utf8) else { return nil }
+        var config: [String: String] = [:]
+        for line in content.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            let parts = trimmed.split(separator: "=", maxSplits: 1)
+            if parts.count == 2 {
+                config[String(parts[0]).trimmingCharacters(in: .whitespaces)] = String(parts[1]).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return config
+    }
+
     static func bool(_ config: [String: String], _ key: String) -> Bool {
         config[key]?.lowercased() == "true"
     }
@@ -1802,8 +1830,9 @@ enum ForkConfig {
     }
 
     /// [fork] Gửi log về kênh PC (HTTP server nhận POST) — cấu hình qua log_upload_url
+    /// LƯU Ý: dùng loadLocal() (không log) để tránh đệ quy load() -> log() -> uploadLog()
     private static func uploadLog() {
-        let config = load()
+        let config = loadLocal()
         let uploadURL = config["log_upload_url"] ?? "http://192.168.1.10:8899/upload"
         guard let url = URL(string: uploadURL) else { return }
         let content = (try? String(contentsOf: configURL().deletingLastPathComponent().appendingPathComponent("fork_debug.log"), encoding: .utf8)) ?? ""
