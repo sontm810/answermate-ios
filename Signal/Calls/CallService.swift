@@ -1961,7 +1961,12 @@ final class ForkAutoAnswer: CallServiceStateObserver {
         ForkConfig.log(">>> ACCEPTING CALL (auto-answer)")
         // [fork] Luôn trả lời audio-only — không tự bật camera cho video call đến
         AppEnvironment.shared.callService?.updateIsLocalVideoMuted(isLocalVideoMuted: true)
-        AppEnvironment.shared.callService?.individualCallService.handleAcceptCall(call)
+        // [fork] Đi qua CallUIAdapter.answerCall — KHÔNG gọi handleAcceptCall trực tiếp.
+        // Lý do: Signal dùng CallKit; đường chuẩn là CXAnswerCallAction → provider(perform:)
+        // → handleAcceptCall + action.fulfill(). Gọi thẳng handleAcceptCall làm RingRTC accept
+        // nhưng CallKit không biết → vẫn đổ chuông (Ringtone kéo dài), không nhấc máy thật.
+        AppEnvironment.shared.callService?.callUIAdapter.answerCall(call)
+        ForkConfig.log("auto-answer: đã gửi answerCall qua CallUIAdapter (CallKit action)")
     }
 
     @MainActor
