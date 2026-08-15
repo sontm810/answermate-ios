@@ -1928,7 +1928,9 @@ final class ForkAutoAnswer: CallServiceStateObserver {
             lastLoggedState = stateDesc
         }
         switch state {
-        case .localRinging_Anticipatory, .localRinging_ReadyToAnswer:
+        case .answering, .localRinging_Anticipatory, .localRinging_ReadyToAnswer:
+            // .answering = RingRTC chưa ready (Signal chuyển answering -> localRinging_* trong
+            // handleRinging) — vẫn phải tiếp tục poll chờ, KHÔNG được dừng.
             pollElapsed += pollInterval
             // Chờ đủ delay
             guard pollElapsed * 1000 >= Double(armedDelayMs) else { return }
@@ -1940,12 +1942,14 @@ final class ForkAutoAnswer: CallServiceStateObserver {
                 pollCount += 1
                 if pollCount > maxPollCount {
                     Logger.info("[fork] hết thời gian chờ RingRTC ready (30s) — bỏ")
+                    ForkConfig.log("hết thời gian chờ RingRTC ready (30s) — bỏ")
                     stopPolling()
                 }
             }
         default:
             // Call kết thúc/chuyển trạng thái khác — dừng
             Logger.info("[fork] pollTick: state=\(state) — dừng poll")
+            ForkConfig.log("pollTick: state=\(state) — dừng poll")
             stopPolling()
         }
     }
